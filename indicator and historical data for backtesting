@@ -1,0 +1,113 @@
+#indicators and historical data
+#we will import deque from collections. deque is a double sided qube which allows you to append and remove
+#elements from both sides of the collections.[you can think of this like normal qube but the sides
+#appending to the right you can also append to the left]
+from collections import deque
+class CalculatingFluorescentOrangeCamel(QCAlgorithm):
+    
+    def Initialize(self):
+        #choose start and end date for backtesting
+        self.SetStartDate(2020, 1, 1)   #set the start date
+        self.SetEndDate(2021, 1, 1)     #set the end date
+        self.SetCash(100000)            #set the strategy cash
+        #then we will quickly add data for SPY for this algorithm we will be using the daily resolution
+        self.spy = self.AddEquity("SPY", Resolution.Daily).Symbol
+        
+        #we want to initialize the simple moving average indicator(SMA).first we specify self.spy to be security
+        #for this indicator then we specify 30 days for the length of this moving average and lastly we pass daily
+        #Resolution as a resolution mode.you can not use a lower resolution here since we added the SPY data as
+        #daily data as well with this we are only done with initialize method
+        # self.sma = self.SMA(self.spy, 30, Resolution.Daily)
+        
+        #let e show how to do this for SMA indicator.since we only want to do this once in begining of our
+        #algorithm we will do this in the initialize method.[perform history request using self.history, 
+        #past argument"self.spy", 30 as a barcount and daily resolution as the resolution]
+        # closing_prices = self.History(self.spy, 30, Resolution.Daily)['close']
+        
+        #we want to iterate over this series of time and closing price information. Since requested dataframe is
+        #also index by symbols. we first want to loc on to the SPY symbol.we can do this dot loc
+        # for time, price in closing_prices.loc[self.spy].items():
+            
+            # now what that let to do is after the SMA indicator with the time and price info of each of these rows
+            # doing this make sure that the SMA indicator is ready and good to use right from the beginning
+            # self.sma.Update(time, price)
+            
+        self.sma = CustomSimpleMovingAverage("CustomSMA", 30)
+        self.RegisterIndicator(self.spy, self.sma, Resolution.Daily)
+            
+    #inside of the OndataMethod ypu want to use the SMA indicator for our decision making.[save the high and low
+    #price of the past year]
+    def OnData(self, data):
+        #the problem here it is might not be ready yet.since prefreh has enough data for 30 days moving average
+        #after leads 30 days
+        if not self.sma.IsReady:
+            #thus we have to check if it is ready before trying to use it if it is not ready we just return
+            return
+        
+        #to save the high and low we use history request for daily resolution and the SPY symbol. this time we
+        #pass a period of 365 days instead of barcount.if you wait specify 365 as a barcount instead of a
+        #timedelta.this history request would get data for the past 365 days
+        hist = self.History(self.spy, timedelta(365), Resolution.Daily)
+        
+        #as the low we save the minimum value of the low price column and as the high we save the maximum value
+        #of the high price column of the list 365 day time frame.[here actually only the first and last day 
+        #of the data changes. so we are basically requesting the same data over and over again]
+        low = min(hist['low'])
+        high = max(hist['high'])
+        
+        #we will save SPY most recent price to the price variable.for this we will access the Securities way
+        #and index it will the SPY symbol object
+        price = self.Securities[self.spy].Price
+        
+        #after that we can now check if spy price is within 5% of its experience 65 days high and whether the
+        #price is above simple moving average to do so we have to access the indicators value which we can do
+        #with dot with dot current dot value.if both condition fulfilled then establish long position
+        if price * 1.05 >= high and self.sma.Current.Value < price:
+            if not self.Portfolio[self.spy].IsLong:
+                
+                #if we don't have long SPY position we use self.SetHolding to allocate 100 percent of our
+                #buying power to SPY
+                self.SetHoldings(self.spy, 1)
+        
+        #basically to set same thing for gone sold.first we check if SPY price is within 5 percent of
+        #its low as well as in downtrend.
+        elif price * 0.95 <= low and self.sma.Current.Value > price:
+            
+            #there after we check if we dont already have a short SPY position
+            if not self.Portfolio[self.spy].IsShort:
+                
+                #if all conditions are fulfilled we use SetHolding to short much of SPY as we can
+                self.SetHoldings(self.spy, -1)
+                
+        else:
+            #we exceed any potential open positions by calling self.Liquidate.
+            self.Liquidate()
+            
+        #so lets use self.plot to plot the high,low and simple moving average value.self.plot
+        #takes three arguments the first is the name of the chart their we want to plot to be on.
+        #the second is the name of the actual plot and the finally only the data
+        self.Plot("Benchmark", "52-High", high)
+        self.Plot("Benchmark", "52-Low", low)
+        self.Plot("Benchmark", "SMA", self.sma.Current.Value)
+        
+#the same goals for a moving elements.we will need this for the moving average since new price data is
+#coming in in and all data is going out
+
+#for custom indicator we will now create our own indicator class . this class has to inherite from
+#the python indicator class and we have to implement both initialize and update method
+class CustomSimpleMovingAverage(PythonIndicator):
+    
+    def __init__(self, name, period):
+        self.Name = name
+        self.Time = datetime.min
+        self.Value = 0
+        self.queue = deque(maxlen=period)
+        
+    def Update(self, input):
+        self.queue.appendleft(input.Close)
+        self.Time = input.EndTime
+        count = len(self.queue)
+        self.Value = sum(self.queue) / count
+        return(count == self.queue.maxlen)
+        
+        
